@@ -6,10 +6,14 @@ from sentence_transformers import SentenceTransformer
 from typing import List, Dict, Optional
 import json
 from dataclasses import dataclass
-import openai
 from rich.console import Console
 from rich.markdown import Markdown
 import sys
+import ast
+from openai import OpenAI
+from dotenv import load_dotenv
+
+load_dotenv()
 
 
 @dataclass
@@ -36,7 +40,6 @@ class VectorDatabase:
         self.cocktails = cocktails
         vectors = []
         for cocktail in cocktails:
-            # Створюємо текстовий опис для векторизації
             text = " ".join(cocktail.ingredients)
             vector = self.encoder.encode([text])[0]
             vectors.append(vector)
@@ -72,45 +75,72 @@ class CocktailCLI:
         self.console = Console()
         self.vector_db = VectorDatabase()
         self.user_prefs = UserPreferences()
+        self.client = OpenAI(
+            api_key=os.getenv("OPENAI_API_KEY"),
+            base_url="https://api.groq.com/openai/v1"
+        )
         self.load_data()
-        self.setup_llm()
 
-    def setup_llm(self):
-        openai.api_key = os.getenv("OPENAI_API_KEY")
-        openai.base_url = "https://api.groq.com/openai/v1"
+    def parse_list_field(self, field_value):
+        if pd.isna(field_value):
+            return []
+        try:
+            return json.loads(field_value)
+        except json.JSONDecodeError:
+            try:
+                return ast.literal_eval(field_value)
+            except (ValueError, SyntaxError):
+                return [item.strip() for item in str(field_value).split(',') if item.strip()]
 
     def load_data(self):
-        df = pd.read_csv('cocktails_data.csv')
-        cocktails = []
-        for _, row in df.iterrows():
-            cocktail = Cocktail(
-                id=row['id'],
-                name=row['name'],
-                alcoholic=row['alcoholic'],
-                category=row['category'],
-                glassType=row['glassType'],
-                instructions=row['instructions'],
-                drinkThumbnail=row['drinkThumbnail'],
-                ingredients=json.loads(row['ingredients']),
-                ingredientMeasures=json.loads(row['ingredientMeasures'])
-            )
-            cocktails.append(cocktail)
-        self.vector_db.add_cocktails(cocktails)
+        try:
+            df = pd.read_csv('cocktails_data.csv')
+            cocktails = []
+
+            for _, row in df.iterrows():
+                try:
+                    ingredients = self.parse_list_field(row['ingredients'])
+                    measures = self.parse_list_field(row['ingredientMeasures'])
+
+                    cocktail = Cocktail(
+                        id=str(row['id']),
+                        name=str(row['name']),
+                        alcoholic=str(row['alcoholic']),
+                        category=str(row['category']),
+                        glassType=str(row['glassType']),
+                        instructions=str(row['instructions']),
+                        drinkThumbnail=str(row['drinkThumbnail']),
+                        ingredients=ingredients,
+                        ingredientMeasures=measures
+                    )
+                    cocktails.append(cocktail)
+                except Exception as e:
+                    self.console.print(f"[yellow]Пропущено коктейль {row.get('name', 'Unknown')}: {str(e)}[/yellow]")
+
+            if not cocktails:
+                raise ValueError("Не вдалося завантажити жодного коктейлю з датасету")
+
+            self.vector_db.add_cocktails(cocktails)
+            self.console.print(f"[green]Завантажено {len(cocktails)} коктейлів[/green]")
+
+        except FileNotFoundError:
+            self.console.print("[red]Помилка: Файл cocktails_data.csv не знайдено[/red]")
+            sys.exit(1)
+        except Exception as e:
+            self.console.print(f"[red]Помилка завантаження даних: {str(e)}[/red]")
+            sys.exit(1)
 
     async def process_query(self, query: str) -> str:
-        # Визначення типу запиту та формування відповіді
         messages = [
             {"role": "system",
              "content": "You are a helpful cocktail expert. Provide concise and accurate responses about cocktails."},
             {"role": "user", "content": query}
         ]
 
-        # Додаємо контекст про вподобання користувача
         if self.user_prefs.get_preferences():
             prefs_context = f"User preferences: {', '.join(self.user_prefs.get_preferences())}"
             messages.append({"role": "system", "content": prefs_context})
 
-        # Якщо запит містить пошук схожих напоїв
         if "схожий" in query.lower():
             similar_cocktails = self.vector_db.search_similar(query, k=3)
             cocktails_context = "Found similar cocktails:\n" + "\n".join(
@@ -118,13 +148,12 @@ class CocktailCLI:
             )
             messages.append({"role": "system", "content": cocktails_context})
 
-        response = await openai.ChatCompletion.acreate(
+        response = self.client.chat.completions.create(
             model="mixtral-8x7b-32768",
             messages=messages,
             max_tokens=500
         )
 
-        # Перевіряємо наявність нових вподобань у запиті
         if "люблю" in query.lower() or "подобається" in query.lower():
             preferences = self.extract_preferences(query)
             for pref in preferences:
@@ -133,12 +162,10 @@ class CocktailCLI:
         return response.choices[0].message.content
 
     def extract_preferences(self, query: str) -> List[str]:
-        # Простий метод вилучення вподобань з тексту
         preferences = []
         keywords = ["люблю", "подобається"]
         for keyword in keywords:
             if keyword in query.lower():
-                # Витягуємо слова після ключового слова
                 words = query.lower().split(keyword)[1].strip().split()
                 preferences.extend([w for w in words if len(w) > 2])
         return preferences
