@@ -115,25 +115,27 @@ class CocktailCLI:
                     )
                     cocktails.append(cocktail)
                 except Exception as e:
-                    self.console.print(f"[yellow]Пропущено коктейль {row.get('name', 'Unknown')}: {str(e)}[/yellow]")
+                    self.console.print(f"[yellow]Skipped cocktail {row.get('name', 'Unknown')}: {str(e)}[/yellow]")
 
             if not cocktails:
-                raise ValueError("Не вдалося завантажити жодного коктейлю з датасету")
+                raise ValueError("No cocktails were loaded from the dataset")
 
             self.vector_db.add_cocktails(cocktails)
-            self.console.print(f"[green]Завантажено {len(cocktails)} коктейлів[/green]")
+            self.console.print(f"[green]Loaded {len(cocktails)} cocktails[/green]")
 
         except FileNotFoundError:
-            self.console.print("[red]Помилка: Файл cocktails_data.csv не знайдено[/red]")
+            self.console.print("[red]Error: cocktails_data.csv file not found[/red]")
             sys.exit(1)
         except Exception as e:
-            self.console.print(f"[red]Помилка завантаження даних: {str(e)}[/red]")
+            self.console.print(f"[red]Error loading data: {str(e)}[/red]")
             sys.exit(1)
 
     async def process_query(self, query: str) -> str:
+        system_prompt = """You are a cocktail expert assistant. Provide concise and accurate responses about cocktails.
+        Focus on being helpful and informative while maintaining a natural conversational tone."""
+
         messages = [
-            {"role": "system",
-             "content": "You are a helpful cocktail expert. Provide concise and accurate responses about cocktails."},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": query}
         ]
 
@@ -141,7 +143,7 @@ class CocktailCLI:
             prefs_context = f"User preferences: {', '.join(self.user_prefs.get_preferences())}"
             messages.append({"role": "system", "content": prefs_context})
 
-        if "схожий" in query.lower():
+        if "similar" in query.lower():
             similar_cocktails = self.vector_db.search_similar(query, k=3)
             cocktails_context = "Found similar cocktails:\n" + "\n".join(
                 [f"- {c.name} ({', '.join(c.ingredients)})" for c in similar_cocktails]
@@ -151,10 +153,11 @@ class CocktailCLI:
         response = self.client.chat.completions.create(
             model="mixtral-8x7b-32768",
             messages=messages,
-            max_tokens=500
+            max_tokens=500,
+            temperature=0.7
         )
 
-        if "люблю" in query.lower() or "подобається" in query.lower():
+        if "like" in query.lower() or "love" in query.lower():
             preferences = self.extract_preferences(query)
             for pref in preferences:
                 self.user_prefs.add_preference(pref)
@@ -163,7 +166,7 @@ class CocktailCLI:
 
     def extract_preferences(self, query: str) -> List[str]:
         preferences = []
-        keywords = ["люблю", "подобається"]
+        keywords = ["like", "love"]
         for keyword in keywords:
             if keyword in query.lower():
                 words = query.lower().split(keyword)[1].strip().split()
@@ -171,15 +174,15 @@ class CocktailCLI:
         return preferences
 
     async def run(self):
-        self.console.print("[bold green]Вітаємо у системі рекомендації коктейлів![/bold green]")
-        self.console.print("Введіть ваш запит або 'вихід' для завершення роботи.")
+        self.console.print("[bold green]Welcome to the Cocktail Recommendation System![/bold green]")
+        self.console.print("Enter your query or type 'exit' to quit.")
 
         while True:
             try:
-                query = input("\nВаш запит: ").strip()
+                query = input("\nYour query: ").strip()
 
-                if query.lower() in ['вихід', 'exit', 'quit']:
-                    self.console.print("[bold red]До побачення![/bold red]")
+                if query.lower() in ['exit', 'quit']:
+                    self.console.print("[bold red]Goodbye![/bold red]")
                     break
 
                 if not query:
@@ -189,10 +192,10 @@ class CocktailCLI:
                 self.console.print(Markdown(response))
 
             except KeyboardInterrupt:
-                self.console.print("\n[bold red]Програму завершено користувачем.[/bold red]")
+                self.console.print("\n[bold red]Program terminated by user.[/bold red]")
                 break
             except Exception as e:
-                self.console.print(f"[bold red]Помилка: {str(e)}[/bold red]")
+                self.console.print(f"[bold red]Error: {str(e)}[/bold red]")
 
 
 if __name__ == "__main__":
