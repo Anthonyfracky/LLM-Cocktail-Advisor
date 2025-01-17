@@ -206,84 +206,69 @@ class CocktailSystem:
 
     async def process_query(self, query: str) -> str:
         try:
+            # Instead of hard-coded rules, use LLM to analyze the query intent
+            messages = [
+                {
+                    "role": "system",
+                    "content": """Analyze the user's cocktail-related query to understand:
+                    1. The type of query (question, recommendation request, preference statement, etc.)
+                    2. Whether it contains any preferences (explicit or implicit)
+                    3. The context and intent behind the query
+
+                    Consider all aspects of the message, not just specific keywords.
+
+                    Return a JSON object with:
+                    {
+                        "query_type": string,  # e.g., "recommendation", "preference_statement", "question", "general_chat"
+                        "contains_preferences": boolean,
+                        "preference_context": string | null,  # explanation of how preferences are expressed
+                        "confidence": float    # 0-1 score for preference detection
+                    }"""
+                },
+                {
+                    "role": "user",
+                    "content": query
+                }
+            ]
+
+            # Get query analysis from LLM
+            response = await self.llm.ainvoke(messages)
+            try:
+                analysis = json.loads(response.content)
+            except json.JSONDecodeError:
+                # Fallback if JSON parsing fails
+                analysis = {
+                    "query_type": "unknown",
+                    "contains_preferences": False,
+                    "preference_context": None,
+                    "confidence": 0.0
+                }
+
+            # Process preferences if detected
             preferences = ""
-            should_analyze_preferences = False
+            if analysis["contains_preferences"]:
+                preference_result = await self.analyze_preferences(query)
+                if preference_result["has_preferences"]:
+                    extracted_prefs = await self.extract_preferences(query)
+                    if extracted_prefs:
+                        preferences = extracted_prefs
 
-            # Check if this is a recommendation request without preference
-            is_recommendation_request = any(
-                word in query.lower() for word in ['recommend', 'recomend', 'suggestion', 'suggest'])
-            contains_with = 'with' in query.lower()
-
-            if is_recommendation_request and contains_with:
-                # For queries like "recommend cocktail with vodka", treat the ingredient as context
-                # but don't save it as a preference
-                preferences = ""
-            else:
-                # For other queries, check for preferences
-                messages = [
-                    {
-                        "role": "system",
-                        "content": """You are a cocktail expert assistant. Determine if the user's message contains 
-                        preferences about cocktails, ingredients, or drinking preferences. Only identify preferences
-                        when users explicitly express likes/dislikes (e.g., "I like", "I love", "I prefer", "I enjoy").
-                        Do not treat ingredient requests or questions as preferences."""
-                    },
-                    {
-                        "role": "user",
-                        "content": query
-                    }
-                ]
-
-                response = await self.llm.ainvoke(
-                    messages,
-                    functions=[self.preference_analysis_function],
-                    function_call="auto"
-                )
-
-                if response.additional_kwargs.get("function_call"):
-                    preference_result = await self.analyze_preferences(query)
-
-                    if preference_result["has_preferences"] and preference_result["confidence"] > 0.6:
-                        extracted_prefs = await self.extract_preferences(query)
-                        if extracted_prefs and "no specific preferences found" not in extracted_prefs.lower():
-                            preferences = extracted_prefs
-                            should_analyze_preferences = True
-
-            # Process the query with context
+            # Get relevant context
             relevant_cocktails = self.cocktail_store.search_similar(query)
-            relevant_preferences = self.preference_store.get_relevant_preferences(
-                query) if should_analyze_preferences else []
+            relevant_preferences = self.preference_store.get_relevant_preferences(query) if preferences else []
 
+            # Build response context
             context = "\n\n".join([doc.page_content for doc in relevant_cocktails])
             preferences_context = "\n\n".join([doc.page_content for doc in relevant_preferences])
             chat_history = "\n".join(self.preference_store.chat_history[-5:])
 
-            qa_prompt = PromptTemplate.from_template(
-                """You are a knowledgeable and friendly cocktail expert. Use the following pieces of context and user preferences to answer the question.
-                If you don't know the answer, just say that you don't know, don't try to make up an answer.
-                Always be specific about cocktail recommendations and include ingredients when relevant.
-                Do not include any confidence scores or technical details in your response.
-                Keep your tone conversational and helpful.
-
-                Context: {context}
-                User Preferences: {preferences}
-                Question: {question}
-                Chat History: {chat_history}
-
-                Answer:"""
-            )
-
-            self.qa_chain = (
-                    qa_prompt
-                    | self.llm
-                    | StrOutputParser()
-            )
-
-            final_response = self.qa_chain.invoke({
+            # Generate response using all available context
+            final_response = await self.qa_chain.ainvoke({
                 "context": context,
                 "preferences": preferences_context,
                 "question": query,
-                "chat_history": chat_history
+                "chat_history": chat_history,
+                "query_analysis": json.dumps(analysis)  # Include query analysis in context
             })
 
             # Update chat history
