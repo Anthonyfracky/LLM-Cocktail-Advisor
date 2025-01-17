@@ -1,7 +1,6 @@
 import os
 import pandas as pd
 import numpy as np
-import faiss
 from typing import List, Dict, Optional
 from dataclasses import dataclass
 from rich.console import Console
@@ -17,11 +16,9 @@ from langchain.prompts import PromptTemplate
 from langchain.docstore.document import Document
 from langchain.schema.runnable import RunnableSequence
 from langchain.schema.output_parser import StrOutputParser
-from operator import itemgetter
 import json
 
 load_dotenv()
-
 
 @dataclass
 class Cocktail:
@@ -42,7 +39,6 @@ Category: {self.category}
 Glass: {self.glassType}
 Instructions: {self.instructions}
 Ingredients: {', '.join(f'{measure} {ingredient}' for measure, ingredient in zip(self.ingredientMeasures, self.ingredients))}"""
-
 
 class CocktailVectorStore:
     def __init__(self):
@@ -76,7 +72,6 @@ class CocktailVectorStore:
             return []
         return self.vector_store.similarity_search(query, k=k)
 
-
 class UserPreferenceStore:
     def __init__(self):
         self.embeddings = HuggingFaceEmbeddings(model_name='all-MiniLM-L6-v2')
@@ -108,10 +103,8 @@ class UserPreferenceStore:
             return []
         return self.vector_store.similarity_search(query, k=k)
 
-
-class CocktailCLI:
+class CocktailSystem:
     def __init__(self):
-        self.console = Console()
         self.cocktail_store = CocktailVectorStore()
         self.preference_store = UserPreferenceStore()
 
@@ -159,23 +152,22 @@ class CocktailCLI:
                     )
                     cocktails.append(cocktail)
                 except Exception as e:
-                    self.console.print(f"[yellow]Skipped cocktail {row.get('name', 'Unknown')}: {str(e)}[/yellow]")
+                    print(f"Skipped cocktail {row.get('name', 'Unknown')}: {str(e)}")
 
             if not cocktails:
                 raise ValueError("No cocktails were loaded from the dataset")
 
             self.cocktail_store.add_cocktails(cocktails)
-            self.console.print(f"[green]Loaded {len(cocktails)} cocktails[/green]")
+            print(f"Loaded {len(cocktails)} cocktails")
 
         except FileNotFoundError:
-            self.console.print("[red]Error: cocktails_data.csv file not found[/red]")
+            print("Error: cocktails_data.csv file not found")
             sys.exit(1)
         except Exception as e:
-            self.console.print(f"[red]Error loading data: {str(e)}[/red]")
+            print(f"Error loading data: {str(e)}")
             sys.exit(1)
 
     def setup_chains(self):
-        # Setup preference extraction chain
         preference_prompt = PromptTemplate.from_template(
             "Extract user preferences from the following text. "
             "Focus on ingredients, types of cocktails, and flavors they like. "
@@ -185,12 +177,11 @@ class CocktailCLI:
         )
 
         self.preference_chain = (
-                preference_prompt
-                | self.llm
-                | StrOutputParser()
+            preference_prompt
+            | self.llm
+            | StrOutputParser()
         )
 
-        # Setup QA chain
         qa_prompt = PromptTemplate.from_template(
             """You are a knowledgeable cocktail expert. Use the following pieces of context and user preferences to answer the question.
             If you don't know the answer, just say that you don't know, don't try to make up an answer.
@@ -205,12 +196,12 @@ class CocktailCLI:
         )
 
         self.qa_chain = (
-                qa_prompt
-                | self.llm
-                | StrOutputParser()
+            qa_prompt
+            | self.llm
+            | StrOutputParser()
         )
 
-    async def extract_preferences_with_langchain(self, query: str) -> str:
+    async def extract_preferences(self, query: str) -> str:
         try:
             response = self.preference_chain.invoke({"text": query})
 
@@ -226,26 +217,22 @@ class CocktailCLI:
 
             return response
         except Exception as e:
-            self.console.print(f"[yellow]Warning: Could not extract preferences: {str(e)}[/yellow]")
+            print(f"Warning: Could not extract preferences: {str(e)}")
             return ""
 
     async def process_query(self, query: str) -> str:
         try:
-            # Extract and save preferences if the query contains preference indicators
             preferences = ""
             if any(word in query.lower() for word in ['like', 'love', 'prefer', 'favorite', 'enjoy']):
-                preferences = await self.extract_preferences_with_langchain(query)
+                preferences = await self.extract_preferences(query)
 
-            # Get relevant cocktails and preferences
             relevant_cocktails = self.cocktail_store.search_similar(query)
             relevant_preferences = self.preference_store.get_relevant_preferences(query)
 
-            # Combine context
             context = "\n\n".join([doc.page_content for doc in relevant_cocktails])
             preferences_context = "\n\n".join([doc.page_content for doc in relevant_preferences])
-            chat_history = "\n".join(self.preference_store.chat_history[-5:])  # Keep last 5 interactions
+            chat_history = "\n".join(self.preference_store.chat_history[-5:])
 
-            # Generate response
             response = self.qa_chain.invoke({
                 "context": context,
                 "preferences": preferences_context,
@@ -253,48 +240,11 @@ class CocktailCLI:
                 "chat_history": chat_history
             })
 
-            # Update chat history
             self.preference_store.chat_history.append(f"User: {query}")
             self.preference_store.chat_history.append(f"Assistant: {response}")
 
             return response
 
         except Exception as e:
-            self.console.print(f"[red]Error in query processing: {str(e)}[/red]")
+            print(f"Error in query processing: {str(e)}")
             return "I apologize, but I encountered an error processing your request. Could you please try rephrasing your question?"
-
-    async def run(self):
-        self.console.print("[bold green]Welcome to the Enhanced Cocktail Recommendation System![/bold green]")
-        self.console.print("Enter your query or type 'exit' to quit.")
-        self.console.print("\nExample queries:")
-        self.console.print("- What cocktails can I make with vodka and lime?")
-        self.console.print("- I like sweet fruity drinks, what do you recommend?")
-        self.console.print("- Show me some popular non-alcoholic cocktails")
-        self.console.print("- What's a good summer cocktail?")
-
-        while True:
-            try:
-                query = input("\nYour query: ").strip()
-
-                if query.lower() in ['exit', 'quit']:
-                    self.console.print("[bold red]Goodbye![/bold red]")
-                    break
-
-                if not query:
-                    continue
-
-                response = await self.process_query(query)
-                self.console.print(Markdown(response))
-
-            except KeyboardInterrupt:
-                self.console.print("\n[bold red]Program terminated by user.[/bold red]")
-                break
-            except Exception as e:
-                self.console.print(f"[bold red]Error: {str(e)}[/bold red]")
-
-
-if __name__ == "__main__":
-    import asyncio
-
-    cli = CocktailCLI()
-    asyncio.run(cli.run())

@@ -9,3 +9,7 @@ langchain
 langchain-openai
 langchain-community
 langchain-huggingface
+fastapi
+uvicorn
+jinja2
+python-multipart
