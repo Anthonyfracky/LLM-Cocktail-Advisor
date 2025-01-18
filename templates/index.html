@@ -7,32 +7,32 @@
     <link rel="stylesheet" href="{{ url_for('static', path='styles.css') }}">
 </head>
 <body>
-    <div class="container">
-        <aside class="preferences-panel">
-            <h2>Your Preferences</h2>
-            <div id="preferences-list">
-                <!-- Preferences will be added here dynamically -->
-            </div>
-            <button id="get-recommendations" class="recommendations-btn">
-                Get Recommendations
-            </button>
-            <button id="reset-session" class="reset-btn">
-                Reset Session
-            </button>
-        </aside>
+<div class="container">
+    <aside class="preferences-panel">
+        <h2>Your Preferences</h2>
+        <div id="preferences-list">
+            <!-- Preferences will be added here dynamically -->
+        </div>
+        <button id="get-recommendations" class="recommendations-btn">
+            Get Recommendations
+        </button>
+        <button id="reset-session" class="reset-btn">
+            Reset Session
+        </button>
+    </aside>
 
-        <main class="chat-container">
-            <div id="chat-messages" class="messages">
-                <!-- Chat messages will be added here dynamically -->
-            </div>
+    <main class="chat-container">
+        <div id="chat-messages" class="messages">
+            <!-- Chat messages will be added here dynamically -->
+        </div>
 
-            <div class="input-container">
-                <input type="text" id="user-input" placeholder="Enter your cocktail query...">
-                <button id="send-button">Send</button>
-            </div>
-        </main>
-    </div>
+        <div class="input-container">
+            <input type="text" id="user-input" placeholder="Enter your cocktail query...">
+            <button id="send-button">Send</button>
+        </div>
+    </main>
+</div>
 
-    <script src="{{ url_for('static', path='/app.js') }}"></script>
+<script src="{{ url_for('static', path='/app.js') }}"></script>
 </body>
 </html>
