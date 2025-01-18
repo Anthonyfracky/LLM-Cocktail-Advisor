@@ -1,6 +1,5 @@
 let sessionId = null;
 
-// Initialize the application
 async function init() {
     try {
         const response = await fetch('/api/session', {
@@ -8,17 +7,18 @@ async function init() {
         });
         const data = await response.json();
         sessionId = data.session_id;
+
+        // Add initial message
+        addMessageToChat('Hi! Tell me about your cocktail preferences.', 'bot');
     } catch (error) {
         console.error('Failed to initialize session:', error);
     }
 }
 
-// Send message to the server
 async function sendMessage(message) {
     if (!sessionId) return;
 
     try {
-        // Add user message to chat
         addMessageToChat(message, 'user');
 
         const response = await fetch('/api/chat', {
@@ -37,8 +37,8 @@ async function sendMessage(message) {
         // Add bot response to chat
         addMessageToChat(data.response, 'bot');
 
-        // Update preferences if any were extracted
-        if (data.preferences && data.preferences.length > 0) {
+        // Update preferences panel with accumulated preferences
+        if (data.preferences) {
             updatePreferences(data.preferences);
         }
     } catch (error) {
@@ -47,7 +47,33 @@ async function sendMessage(message) {
     }
 }
 
-// Get recommendations based on preferences
+function updatePreferences(preferences) {
+    const preferencesContainer = document.getElementById('preferences-list');
+    preferencesContainer.innerHTML = ''; // Clear current display
+
+    // Helper function to add a category of preferences
+    const addPreferenceCategory = (items, emoji, title) => {
+        if (items && items.length > 0) {
+            const categoryDiv = document.createElement('div');
+            categoryDiv.className = 'preference-category';
+            categoryDiv.innerHTML = `
+                <div class="preference-category-title">${title}</div>
+                ${items.map(item => `
+                    <div class="preference-item">
+                        ${emoji} ${item}
+                    </div>
+                `).join('')}
+            `;
+            preferencesContainer.appendChild(categoryDiv);
+        }
+    };
+
+    // Add each category with its own section
+    addPreferenceCategory(preferences.liked_ingredients, '🌿', 'Favorite Ingredients');
+    addPreferenceCategory(preferences.liked_cocktails, '🍸', 'Favorite Cocktails');
+    addPreferenceCategory(preferences.liked_characteristics, '✨', 'Preferred Characteristics');
+}
+
 async function getRecommendations() {
     if (!sessionId) return;
 
@@ -71,7 +97,16 @@ async function getRecommendations() {
     }
 }
 
-// Add a message to the chat container
+function resetSession() {
+    const messagesContainer = document.getElementById('chat-messages');
+    const preferencesContainer = document.getElementById('preferences-list');
+
+    messagesContainer.innerHTML = '';
+    preferencesContainer.innerHTML = '';
+
+    init();
+}
+
 function addMessageToChat(message, type) {
     const messagesContainer = document.getElementById('chat-messages');
     const messageElement = document.createElement('div');
@@ -81,28 +116,14 @@ function addMessageToChat(message, type) {
     messagesContainer.scrollTop = messagesContainer.scrollHeight;
 }
 
-// Update preferences list
-function updatePreferences(preferences) {
-    const preferencesContainer = document.getElementById('preferences-list');
-    preferencesContainer.innerHTML = ''; // Clear current preferences
-
-    preferences.forEach(preference => {
-        const preferenceElement = document.createElement('div');
-        preferenceElement.classList.add('preference-item');
-        preferenceElement.textContent = preference;
-        preferencesContainer.appendChild(preferenceElement);
-    });
-}
-
-// Event Listeners
 document.addEventListener('DOMContentLoaded', () => {
     init();
 
     const userInput = document.getElementById('user-input');
     const sendButton = document.getElementById('send-button');
     const recommendationsButton = document.getElementById('get-recommendations');
+    const resetButton = document.getElementById('reset-session');
 
-    // Send message on button click
     sendButton.addEventListener('click', () => {
         const message = userInput.value.trim();
         if (message) {
@@ -111,7 +132,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    // Send message on Enter key
     userInput.addEventListener('keypress', (e) => {
         if (e.key === 'Enter') {
             const message = userInput.value.trim();
@@ -122,6 +142,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    // Get recommendations on button click
     recommendationsButton.addEventListener('click', getRecommendations);
+    resetButton.addEventListener('click', resetSession);
 });

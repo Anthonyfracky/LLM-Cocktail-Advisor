@@ -145,141 +145,102 @@ class CocktailSystem:
             }
         }
 
-    async def analyze_preferences(self, user_input: str) -> dict:
+    async def analyze_preferences(self, query: str) -> dict:
         """Analyzes user preferences using a separate LLM call"""
         messages = [
             {
                 "role": "system",
-                "content": """Analyze the user's message for cocktail preferences. Return a JSON object with:
-                - has_preferences: boolean indicating if preferences were found
-                - preferences: string describing the preferences or null if none found
-                - confidence: number between 0 and 1 indicating confidence in the analysis
+                "content": """Extract ONLY clear positive preferences from the user's message. Return a JSON object with:
+                - liked_ingredients: list of ingredients they explicitly like
+                - liked_cocktails: list of specific cocktails they like
+                - liked_characteristics: list of characteristics they prefer (e.g. "sweet", "strong")
 
-                Example preferences to look for:
-                - Specific ingredients they like/dislike
-                - Types of cocktails they enjoy
-                - Flavor preferences (sweet, sour, bitter, etc.)
-                - Strength preferences
-                - Style preferences"""
+                Only include clearly stated positive preferences. If none found, return empty lists."""
             },
             {
                 "role": "user",
-                "content": user_input
+                "content": query
             }
         ]
 
         response = await self.llm.ainvoke(messages)
-
         try:
-            # Try to parse the response as a structured preference analysis
+            # Parse the response
             content = response.content
             if isinstance(content, str):
-                # If it's a string, try to extract JSON from it
+                # Extract JSON from the response
                 try:
-                    # Look for JSON-like structure in the response
                     start = content.find("{")
                     end = content.rfind("}") + 1
                     if start >= 0 and end > start:
                         json_str = content[start:end]
                         result = json.loads(json_str)
                         return {
-                            "has_preferences": bool(result.get("has_preferences", False)),
-                            "preferences": result.get("preferences"),
-                            "confidence": float(result.get("confidence", 0.0))
+                            "liked_ingredients": result.get("liked_ingredients", []),
+                            "liked_cocktails": result.get("liked_cocktails", []),
+                            "liked_characteristics": result.get("liked_characteristics", [])
                         }
                 except (json.JSONDecodeError, ValueError):
                     pass
 
-            # If parsing fails, return a default structure
             return {
-                "has_preferences": False,
-                "preferences": None,
-                "confidence": 0.0
+                "liked_ingredients": [],
+                "liked_cocktails": [],
+                "liked_characteristics": []
             }
         except Exception as e:
             print(f"Error analyzing preferences: {e}")
             return {
-                "has_preferences": False,
-                "preferences": None,
-                "confidence": 0.0
+                "liked_ingredients": [],
+                "liked_cocktails": [],
+                "liked_characteristics": []
             }
 
-    async def process_query(self, query: str) -> str:
+    async def process_query(self, query: str) -> dict:  # змінюємо повернення на dict
         try:
-            # Instead of hard-coded rules, use LLM to analyze the query intent
-            messages = [
-                {
-                    "role": "system",
-                    "content": """Analyze the user's cocktail-related query to understand:
-                    1. The type of query (question, recommendation request, preference statement, etc.)
-                    2. Whether it contains any preferences (explicit or implicit)
-                    3. The context and intent behind the query
+            # Аналіз преференцій
+            preference_result = await self.analyze_preferences(query)
 
-                    Consider all aspects of the message, not just specific keywords.
-
-                    Return a JSON object with:
-                    {
-                        "query_type": string,  # e.g., "recommendation", "preference_statement", "question", "general_chat"
-                        "contains_preferences": boolean,
-                        "preference_context": string | null,  # explanation of how preferences are expressed
-                        "confidence": float    # 0-1 score for preference detection
-                    }"""
-                },
-                {
-                    "role": "user",
-                    "content": query
-                }
-            ]
-
-            # Get query analysis from LLM
-            response = await self.llm.ainvoke(messages)
-            try:
-                analysis = json.loads(response.content)
-            except json.JSONDecodeError:
-                # Fallback if JSON parsing fails
-                analysis = {
-                    "query_type": "unknown",
-                    "contains_preferences": False,
-                    "preference_context": None,
-                    "confidence": 0.0
-                }
-
-            # Process preferences if detected
-            preferences = ""
-            if analysis["contains_preferences"]:
-                preference_result = await self.analyze_preferences(query)
-                if preference_result["has_preferences"]:
-                    extracted_prefs = await self.extract_preferences(query)
-                    if extracted_prefs:
-                        preferences = extracted_prefs
-
-            # Get relevant context
+            # Отримання релевантних коктейлів
             relevant_cocktails = self.cocktail_store.search_similar(query)
-            relevant_preferences = self.preference_store.get_relevant_preferences(query) if preferences else []
+            relevant_preferences = self.preference_store.get_relevant_preferences(query)
 
-            # Build response context
+            # Формування контексту
             context = "\n\n".join([doc.page_content for doc in relevant_cocktails])
             preferences_context = "\n\n".join([doc.page_content for doc in relevant_preferences])
             chat_history = "\n".join(self.preference_store.chat_history[-5:])
 
-            # Generate response using all available context
-            final_response = await self.qa_chain.ainvoke({
+            # Генерація відповіді
+            response = await self.qa_chain.ainvoke({
                 "context": context,
                 "preferences": preferences_context,
                 "question": query,
-                "chat_history": chat_history,
-                "query_analysis": json.dumps(analysis)  # Include query analysis in context
+                "chat_history": chat_history
             })
 
-            # Update chat history
+            # Оновлення історії чату
             self.preference_store.chat_history.append(f"User: {query}")
-            self.preference_store.chat_history.append(f"Assistant: {final_response}")
+            self.preference_store.chat_history.append(f"Assistant: {response}")
 
-            return final_response
+            return {
+                "response": response,
+                "preferences": {
+                    "liked_ingredients": preference_result.get("liked_ingredients", []),
+                    "liked_cocktails": preference_result.get("liked_cocktails", []),
+                    "liked_characteristics": preference_result.get("liked_characteristics", [])
+                }
+            }
 
         except Exception as e:
             print(f"Error in query processing: {str(e)}")
-            return "I apologize, but I encountered an error processing your request. Could you please try rephrasing your question?"
+            return {
+                "response": "I apologize, but I encountered an error processing your request. Could you please try rephrasing your question?",
+                "preferences": {
+                    "liked_ingredients": [],
+                    "liked_cocktails": [],
+                    "liked_characteristics": []
+                }
+            }
 
     def parse_list_field(self, field_value):
         if pd.isna(field_value):

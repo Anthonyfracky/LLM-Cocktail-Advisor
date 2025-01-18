@@ -15,7 +15,7 @@ app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
-# Store active sessions
+# Store active sessions and their preferences
 sessions: Dict[str, CocktailSystem] = {}
 preference_stores: Dict[str, dict] = {}
 
@@ -34,7 +34,12 @@ async def root(request: Request):
 async def create_session():
     session_id = str(uuid.uuid4())
     sessions[session_id] = CocktailSystem()
-    preference_stores[session_id] = []
+    # Initialize preference store with empty lists
+    preference_stores[session_id] = {
+        "liked_ingredients": [],
+        "liked_cocktails": [],
+        "liked_characteristics": []
+    }
     return {"session_id": session_id}
 
 
@@ -46,15 +51,24 @@ async def chat(request: ChatRequest):
     system = sessions[request.session_id]
     response = await system.process_query(request.message)
 
-    # Get updated preferences
-    preferences = []
-    if system.preference_store.preferences:
-        preferences = [p["text"] for p in system.preference_store.preferences]
-        preference_stores[request.session_id] = preferences
+    # Get new preferences from the current message
+    new_preferences = response.get("preferences", {})
+
+    # Update stored preferences by combining with new preferences
+    stored_prefs = preference_stores[request.session_id]
+
+    # Update each category, avoiding duplicates
+    for category in ["liked_ingredients", "liked_cocktails", "liked_characteristics"]:
+        new_items = new_preferences.get(category, [])
+        # Convert to set to remove duplicates, then back to list
+        stored_prefs[category] = list(set(stored_prefs[category] + new_items))
+
+    # Store updated preferences
+    preference_stores[request.session_id] = stored_prefs
 
     return {
-        "response": response,
-        "preferences": preferences
+        "response": response["response"],
+        "preferences": stored_prefs
     }
 
 
@@ -64,27 +78,32 @@ async def get_recommendations(request: ChatRequest):
         return {"error": "Invalid session"}
 
     system = sessions[request.session_id]
-    stored_preferences = preference_stores.get(request.session_id, [])
+    stored_preferences = preference_stores.get(request.session_id, {})
 
-    if not stored_preferences:
+    if not any(stored_preferences.values()):
         return {"recommendations": "No preferences stored yet. Tell me what kind of drinks you like!"}
 
-    preferences_text = " ".join(stored_preferences)
-    response = await system.process_query(
-        f"Based on these preferences: {preferences_text}, what cocktails would you recommend?"
-    )
+    # Create a readable preferences string
+    preferences_text = []
+    if stored_preferences.get("liked_ingredients"):
+        preferences_text.append(f"ingredients: {', '.join(stored_preferences['liked_ingredients'])}")
+    if stored_preferences.get("liked_cocktails"):
+        preferences_text.append(f"cocktails: {', '.join(stored_preferences['liked_cocktails'])}")
+    if stored_preferences.get("liked_characteristics"):
+        preferences_text.append(f"characteristics: {', '.join(stored_preferences['liked_characteristics'])}")
 
-    return {"recommendations": response}
+    preferences_string = "Based on your preferences for " + "; ".join(preferences_text)
+    response = await system.process_query(f"{preferences_string}, what cocktails would you recommend?")
+
+    return {"recommendations": response["response"]}
 
 
 @app.on_event("startup")
 async def startup_event():
-    # Ensure required directories exist
     os.makedirs("static", exist_ok=True)
     os.makedirs("templates", exist_ok=True)
 
 
-# Session cleanup (optional, implement based on your needs)
 @app.on_event("shutdown")
 async def shutdown_event():
     sessions.clear()
