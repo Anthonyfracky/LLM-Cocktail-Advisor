@@ -1,29 +1,20 @@
 import os
-import pandas as pd
-import numpy as np
-from typing import List, Dict, Optional
-from dataclasses import dataclass
-from rich.console import Console
-from rich.markdown import Markdown
 import sys
 import ast
-from openai import OpenAI
+import json
+import pandas as pd
 from dotenv import load_dotenv
-from langchain_community.vectorstores import FAISS as LangchainFAISS
-from langchain_huggingface import HuggingFaceEmbeddings
+from dataclasses import dataclass
 from langchain_openai import ChatOpenAI
 from langchain.prompts import PromptTemplate
 from langchain.docstore.document import Document
-from langchain.schema.runnable import RunnableSequence
+from langchain_huggingface import HuggingFaceEmbeddings
 from langchain.schema.output_parser import StrOutputParser
-import json
+from langchain_community.vectorstores import FAISS as LangchainFAISS
 from typing import List, Dict, Optional, TypedDict
-from typing_extensions import Annotated
-from langchain_core.tools import tool
-from langchain.tools.render import format_tool_to_openai_function
-from langchain_openai import ChatOpenAI
 
 load_dotenv()
+
 
 @dataclass
 class Cocktail:
@@ -44,6 +35,7 @@ Category: {self.category}
 Glass: {self.glassType}
 Instructions: {self.instructions}
 Ingredients: {', '.join(f'{measure} {ingredient}' for measure, ingredient in zip(self.ingredientMeasures, self.ingredients))}"""
+
 
 class CocktailVectorStore:
     def __init__(self):
@@ -77,6 +69,7 @@ class CocktailVectorStore:
             return []
         return self.vector_store.similarity_search(query, k=k)
 
+
 class UserPreferenceStore:
     def __init__(self):
         self.embeddings = HuggingFaceEmbeddings(model_name='all-MiniLM-L6-v2')
@@ -108,10 +101,12 @@ class UserPreferenceStore:
             return []
         return self.vector_store.similarity_search(query, k=k)
 
+
 class PreferenceInfo(TypedDict):
     has_preferences: bool
     preferences: Optional[str]
     confidence: float
+
 
 class CocktailSystem:
     def __init__(self):
@@ -129,7 +124,6 @@ class CocktailSystem:
         self.setup_tools()
 
     def setup_tools(self):
-        # Define the schema for the function
         self.preference_analysis_function = {
             "name": "analyze_preferences",
             "description": "Analyzes user input to detect and extract cocktail preferences",
@@ -150,12 +144,35 @@ class CocktailSystem:
         messages = [
             {
                 "role": "system",
-                "content": """Extract ONLY clear positive preferences from the user's message. Return a JSON object with:
-                - liked_ingredients: list of ingredients they explicitly like
-                - liked_cocktails: list of specific cocktails they like
-                - liked_characteristics: list of characteristics they prefer (e.g. "sweet", "strong")
+                "content": """Extract ONLY explicitly stated preferences from the user's message. 
+                Look for clear indicators like:
+                - "I like/love/enjoy..."
+                - "My favorite is..."
+                - "I prefer..."
+                - "I'm a fan of..."
 
-                Only include clearly stated positive preferences. If none found, return empty lists."""
+                DO NOT include:
+                - Ingredients or cocktails that are just mentioned
+                - Items in questions (e.g. "recommend something with vodka")
+                - Hypothetical preferences
+
+                Return a JSON object with:
+                - liked_ingredients: list of ingredients they explicitly like
+                - liked_cocktails: list of specific cocktails they explicitly like
+                - liked_characteristics: list of characteristics they explicitly prefer
+
+                Only include clearly stated positive preferences. If none found, return empty lists.
+
+                Examples:
+                "Can you recommend a cocktail with vodka?"
+                -> { "liked_ingredients": [], "liked_cocktails": [], "liked_characteristics": [] }
+
+                "I love mojitos and fresh mint"
+                -> {
+                    "liked_ingredients": ["mint"],
+                    "liked_cocktails": ["mojito"],
+                    "liked_characteristics": []
+                }"""
             },
             {
                 "role": "user",
@@ -165,10 +182,8 @@ class CocktailSystem:
 
         response = await self.llm.ainvoke(messages)
         try:
-            # Parse the response
             content = response.content
             if isinstance(content, str):
-                # Extract JSON from the response
                 try:
                     start = content.find("{")
                     end = content.rfind("}") + 1
@@ -196,21 +211,31 @@ class CocktailSystem:
                 "liked_characteristics": []
             }
 
-    async def process_query(self, query: str) -> dict:  # змінюємо повернення на dict
+    async def process_query(self, query: str) -> dict:
         try:
-            # Аналіз преференцій
-            preference_result = await self.analyze_preferences(query)
+            if query.lower() in ["hello", "hi", "get recommendations"] or query.startswith("Based on your preferences"):
+                return {
+                    "response": await self.qa_chain.ainvoke({
+                        "context": "",
+                        "preferences": "",
+                        "question": query,
+                        "chat_history": "\n".join(self.preference_store.chat_history[-5:])
+                    }),
+                    "preferences": {
+                        "liked_ingredients": [],
+                        "liked_cocktails": [],
+                        "liked_characteristics": []
+                    }
+                }
 
-            # Отримання релевантних коктейлів
+            preference_result = await self.analyze_preferences(query)
             relevant_cocktails = self.cocktail_store.search_similar(query)
             relevant_preferences = self.preference_store.get_relevant_preferences(query)
 
-            # Формування контексту
             context = "\n\n".join([doc.page_content for doc in relevant_cocktails])
             preferences_context = "\n\n".join([doc.page_content for doc in relevant_preferences])
             chat_history = "\n".join(self.preference_store.chat_history[-5:])
 
-            # Генерація відповіді
             response = await self.qa_chain.ainvoke({
                 "context": context,
                 "preferences": preferences_context,
@@ -218,7 +243,6 @@ class CocktailSystem:
                 "chat_history": chat_history
             })
 
-            # Оновлення історії чату
             self.preference_store.chat_history.append(f"User: {query}")
             self.preference_store.chat_history.append(f"Assistant: {response}")
 
@@ -301,9 +325,9 @@ class CocktailSystem:
         )
 
         self.preference_chain = (
-            preference_prompt
-            | self.llm
-            | StrOutputParser()
+                preference_prompt
+                | self.llm
+                | StrOutputParser()
         )
 
         qa_prompt = PromptTemplate.from_template(
@@ -320,9 +344,9 @@ class CocktailSystem:
         )
 
         self.qa_chain = (
-            qa_prompt
-            | self.llm
-            | StrOutputParser()
+                qa_prompt
+                | self.llm
+                | StrOutputParser()
         )
 
     async def extract_preferences(self, query: str) -> str:
@@ -343,4 +367,3 @@ class CocktailSystem:
         except Exception as e:
             print(f"Warning: Could not extract preferences: {str(e)}")
             return ""
-

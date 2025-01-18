@@ -31,7 +31,7 @@ body {
     background-color: white;
     padding: 20px;
     border-radius: 10px;
-    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
 }
 
 .preference-group-title {
@@ -50,7 +50,7 @@ body {
     flex-direction: column;
     background-color: white;
     border-radius: 10px;
-    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
 }
 
 .messages {
@@ -124,7 +124,6 @@ button:hover {
     font-size: 14px;
 }
 
-/* Додаємо до існуючих стилів */
 .reset-btn {
     width: 100%;
     margin-top: 10px;

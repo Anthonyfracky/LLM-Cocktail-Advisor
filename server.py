@@ -1,21 +1,18 @@
+import os
+import uuid
+from typing import Dict
+from pydantic import BaseModel
+from main import CocktailSystem
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from typing import Dict, Optional
-import uuid
-from pydantic import BaseModel
-from main import CocktailSystem
-import asyncio
-import os
 
 app = FastAPI()
 
-# Mount static files and templates
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
-# Store active sessions and their preferences
 sessions: Dict[str, CocktailSystem] = {}
 preference_stores: Dict[str, dict] = {}
 
@@ -34,7 +31,7 @@ async def root(request: Request):
 async def create_session():
     session_id = str(uuid.uuid4())
     sessions[session_id] = CocktailSystem()
-    # Initialize preference store with empty lists
+
     preference_stores[session_id] = {
         "liked_ingredients": [],
         "liked_cocktails": [],
@@ -51,20 +48,20 @@ async def chat(request: ChatRequest):
     system = sessions[request.session_id]
     response = await system.process_query(request.message)
 
-    # Get new preferences from the current message
     new_preferences = response.get("preferences", {})
 
-    # Update stored preferences by combining with new preferences
-    stored_prefs = preference_stores[request.session_id]
+    if any(new_preferences.get(category, []) for category in
+           ["liked_ingredients", "liked_cocktails", "liked_characteristics"]):
+        stored_prefs = preference_stores[request.session_id]
 
-    # Update each category, avoiding duplicates
-    for category in ["liked_ingredients", "liked_cocktails", "liked_characteristics"]:
-        new_items = new_preferences.get(category, [])
-        # Convert to set to remove duplicates, then back to list
-        stored_prefs[category] = list(set(stored_prefs[category] + new_items))
+        for category in ["liked_ingredients", "liked_cocktails", "liked_characteristics"]:
+            new_items = new_preferences.get(category, [])
+            if new_items:
+                stored_prefs[category] = list(set(stored_prefs[category] + new_items))
 
-    # Store updated preferences
-    preference_stores[request.session_id] = stored_prefs
+        preference_stores[request.session_id] = stored_prefs
+    else:
+        stored_prefs = preference_stores[request.session_id]
 
     return {
         "response": response["response"],

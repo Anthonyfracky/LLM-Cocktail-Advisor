@@ -8,11 +8,21 @@ async function init() {
         const data = await response.json();
         sessionId = data.session_id;
 
-        // Add initial message
-        addMessageToChat('Hi! Tell me about your cocktail preferences.', 'bot');
+
+        addSystemMessage('Hi! Tell me about your cocktail preferences.');
     } catch (error) {
         console.error('Failed to initialize session:', error);
     }
+}
+
+
+function addSystemMessage(message) {
+    const messagesContainer = document.getElementById('chat-messages');
+    const messageElement = document.createElement('div');
+    messageElement.classList.add('message', 'bot');
+    messageElement.textContent = message;
+    messagesContainer.appendChild(messageElement);
+    messagesContainer.scrollTop = messagesContainer.scrollHeight;
 }
 
 async function sendMessage(message) {
@@ -34,10 +44,10 @@ async function sendMessage(message) {
 
         const data = await response.json();
 
-        // Add bot response to chat
+
         addMessageToChat(data.response, 'bot');
 
-        // Update preferences panel with accumulated preferences
+
         if (data.preferences) {
             updatePreferences(data.preferences);
         }
@@ -49,9 +59,9 @@ async function sendMessage(message) {
 
 function updatePreferences(preferences) {
     const preferencesContainer = document.getElementById('preferences-list');
-    preferencesContainer.innerHTML = ''; // Clear current display
+    preferencesContainer.innerHTML = '';
 
-    // Helper function to add a category of preferences
+
     const addPreferenceCategory = (items, emoji, title) => {
         if (items && items.length > 0) {
             const categoryDiv = document.createElement('div');
@@ -68,7 +78,7 @@ function updatePreferences(preferences) {
         }
     };
 
-    // Add each category with its own section
+
     addPreferenceCategory(preferences.liked_ingredients, '🌿', 'Favorite Ingredients');
     addPreferenceCategory(preferences.liked_cocktails, '🍸', 'Favorite Cocktails');
     addPreferenceCategory(preferences.liked_characteristics, '✨', 'Preferred Characteristics');
